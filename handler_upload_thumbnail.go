@@ -2,10 +2,12 @@ package main
 
 import (
 	"io"
-	"net/http"
 	"mime"
+	"net/http"
 	"os"
 	"path/filepath"
+	"crypto/rand"
+	"encoding/base64"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
@@ -56,7 +58,6 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 	defer file.Close()
 
-
 	mediaType := header.Header.Get("Content-Type")
 	mimeType, _, err := mime.ParseMediaType(mediaType)
 	if err != nil {
@@ -71,7 +72,12 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	ext := filepath.Ext(header.Filename)
 
-	fileName := video.ID.String() + ext
+	key := make([]byte, 32)
+	rand.Read(key)
+
+	randomString := base64.RawURLEncoding.EncodeToString(key)
+
+	fileName := randomString + ext
 
 	dstPath := filepath.Join(cfg.assetsRoot, fileName)
 
@@ -88,7 +94,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	videoThumbnailURL := filepath.Join("/assets", fileName)
+	videoThumbnailURL := "http://localhost:" + cfg.port + "/assets/" + fileName
 	video.ThumbnailURL = &videoThumbnailURL
 
 	err = cfg.db.UpdateVideo(video)
