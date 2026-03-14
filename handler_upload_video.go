@@ -1,13 +1,17 @@
 package main
 
 import (
-	"context"
+	"bytes"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"io"
+	"math"
 	"mime"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -92,18 +96,32 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	key := make([]byte, 32)
 	rand.Read(key)
 
-	randomString := base64.RawURLEncoding.EncodeToString(key)
+	randomKey := base64.RawURLEncoding.EncodeToString(key)
 
-	fileName := randomString + ext
+	aspectRatio, err := getVideoAspectRatio(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Could no inspect video", err)
+		return
+	}
+
+	aspectRatioKey := "other"
+
+	if aspectRatio == "16:9" {
+		aspectRatioKey = "landscape"
+	} else if aspectRatio == "9:16" {
+		aspectRatioKey = "portrait"
+	}
+
+	fileKey := aspectRatioKey + "/" + randomKey + ext
 
 	params := &s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
-		Key:         &fileName,
+		Key:         &fileKey,
 		ContentType: &mimeType,
 		Body:        tempFile,
 	}
 
-	_, err = cfg.s3Client.PutObject(context.Background(), params)
+	_, err = cfg.s3Client.PutObject(r.Context(), params)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Failed to upload video", err)
 		return
@@ -119,4 +137,58 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	}
 
 	respondWithJSON(w, http.StatusOK, video)
+}
+
+func getVideoAspectRatio(filePath string) (string, error) {
+	cmd := exec.Command(
+		"ffprobe",
+		"-v", "error",
+		"-print_format", "json",
+		"-show_streams",
+		filePath,
+	)
+
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+
+	if err := cmd.Run(); err != nil {
+		return "", err
+	}
+
+	type ffprobeResult struct {
+		Streams []struct {
+			Width  int `json:"width"`
+			Height int `json:"height"`
+		} `json:"streams"`
+	}
+
+	var unmarshalResult ffprobeResult
+	if err := json.Unmarshal(stdout.Bytes(), &unmarshalResult); err != nil {
+		return "", err
+	}
+
+	if len(unmarshalResult.Streams) == 0 {
+		return "", fmt.Errorf("No streams found")
+	}
+
+	width := unmarshalResult.Streams[0].Width
+	height := unmarshalResult.Streams[0].Height
+
+	if width == 0 || height == 0 {
+		return "", fmt.Errorf("Invalid video dimensions")
+	}
+
+	ratio := float64(width) / float64(height)
+
+	aspect := "other"
+	tolerance := 0.01
+
+	if math.Abs(ratio-(16.0/9.0)) < tolerance {
+		aspect = "16:9"
+
+	} else if math.Abs(ratio-(9.0/16.0)) < tolerance {
+		aspect = "9:16"
+	}
+
+	return aspect, nil
 }
