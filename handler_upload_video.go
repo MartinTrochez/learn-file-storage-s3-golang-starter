@@ -140,7 +140,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	videoURL := "https://" + cfg.s3Bucket + ".s3." + cfg.s3Region + ".amazonaws.com/" + *params.Key
+	videoURL := "https://" + cfg.s3CfDistribution + "/" + fileKey
 	video.VideoURL = &videoURL
 
 	err = cfg.db.UpdateVideo(video)
@@ -210,7 +210,7 @@ func processVideoForFastStart(filePath string) (string, error) {
 	outPath := filePath + ".processing"
 
 	cmd := exec.Command(
-		"ffmpeg", "-i", filePath, "-c", "copy", 
+		"ffmpeg", "-i", filePath, "-c", "copy",
 		"-movflags", "faststart", "-f", "mp4", outPath,
 	)
 
